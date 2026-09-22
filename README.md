@@ -46,13 +46,52 @@ Requires Xcode with Swift 6.0 or later. Run from the project directory:
 ./build.sh
 ```
 
-The script creates `build/Mac Duo.app` with an ad-hoc signature. Open it from Finder, or build and launch with:
+The script creates `build/Mac Duo.app`. Open it from Finder, or build and launch with:
 
 ```sh
 ./build.sh --run
 ```
 
-macOS may require Screen Recording permission again after rebuilding with ad-hoc signing.
+Install it into `/Applications` and launch it from there with:
+
+```sh
+./build.sh --install --run
+```
+
+### Keeping the Screen Recording permission
+
+macOS ties the Screen Recording grant to the app's designated requirement. An
+ad-hoc signature puts the binary's own hash in there, so every rebuild looks
+like a different app and the permission has to be granted again — until it is,
+the effect has nothing to draw and macOS re-asks each time the lid passes the
+start angle.
+
+Signing with a certificate pins the requirement to the certificate instead, and
+the grant survives rebuilds. A self-signed one is enough:
+
+```sh
+openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
+  -keyout /tmp/macduo-key.pem -out /tmp/macduo-cert.pem \
+  -subj "/CN=Mac Duo Dev" \
+  -addext "basicConstraints=critical,CA:true" \
+  -addext "keyUsage=critical,digitalSignature,keyCertSign" \
+  -addext "extendedKeyUsage=critical,codeSigning"
+openssl pkcs12 -export -inkey /tmp/macduo-key.pem -in /tmp/macduo-cert.pem \
+  -out /tmp/macduo.p12 -name "Mac Duo Dev" \
+  -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES -macalg sha1 -passout pass:macduo
+security import /tmp/macduo.p12 -k ~/Library/Keychains/login.keychain-db \
+  -P macduo -T /usr/bin/codesign
+```
+
+`build.sh` picks the certificate up by name from then on. The certificate does
+not need to be trusted for this, and `SIGN_IDENTITY` still overrides it.
+
+After the first build with a new identity, clear the stale entries and grant the
+permission once:
+
+```sh
+tccutil reset ScreenCapture to.maki.MacDuo
+```
 
 ## Known limitations
 

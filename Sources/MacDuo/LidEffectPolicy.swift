@@ -53,6 +53,10 @@ struct LidEffectPolicy {
     let threshold: Double
     let hysteresis: Double
 
+    /// Whether a lid rising through the effect zone with nothing showing may
+    /// start a run of its own and play the effect in reverse.
+    var playsOnOpen: Bool = false
+
     /// A lid held at or above this angle has been opened again, even when
     /// threshold + hysteresis is past what the hinge can reach. The threshold
     /// itself, so a hinge whose limit rounds to the threshold still releases.
@@ -66,12 +70,23 @@ struct LidEffectPolicy {
     /// effect on and off.
     static let minimumReleaseRise: Double = 1.5
 
+    /// How far the lid must have risen from its lowest resting reading before
+    /// an opening run starts. Tilting the screen up a couple of degrees to
+    /// suit the seat must not play the effect; opening a lid moves much
+    /// further, so the run starts a few degrees into the rise.
+    static let minimumOpenStartRise: Double = 8
+
+    /// How far below the start angle the lid must still be for an opening run
+    /// to be worth starting. Any nearer and there is nothing left to animate.
+    static let minimumOpenStartDrop: Double = 10
+
     func wantsEffect(
         isEnabled: Bool,
         isActive: Bool,
         angle: Double,
         predictedAngle: Double,
         riseSinceLowest: Double,
+        riseSinceIdleLow: Double,
         hasBeenAboveThreshold: Bool,
         wasClosingRecently: Bool,
         isClearlyOpening: Bool,
@@ -97,6 +112,17 @@ struct LidEffectPolicy {
             // sensor jitter around the start angle.
             guard minimumDurationElapsed else { return true }
             return angle < threshold + hysteresis
+        }
+
+        // A lid rising through the effect zone with no run of its own plays
+        // the effect in reverse, so opening it looks like closing it backwards.
+        // This is the only path for a close macOS slept through, and it also
+        // picks up a run the timeout ended early.
+        if playsOnOpen,
+           isClearlyOpening,
+           angle <= threshold - Self.minimumOpenStartDrop,
+           riseSinceIdleLow >= Self.minimumOpenStartRise {
+            return true
         }
 
         // A resting or opening lid below the threshold must not start the

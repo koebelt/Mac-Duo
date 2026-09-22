@@ -112,6 +112,11 @@ struct SettingsView: View {
                 isOn: $preferences.isTimeoutEnabled,
                 help: localized("Ends the effect once the angle stops changing.")
             )
+            toggleRow(
+                localized("Play on opening"),
+                isOn: $preferences.playsOnOpen,
+                help: localized("Plays the effect in reverse as the lid opens back up, including after the Mac has slept.")
+            )
             slider(
                 localized("Start angle"), value: $preferences.thresholdAngle, in: 5...130, format: "%.0f°",
                 help: localized("The effect starts at this angle.")
@@ -173,7 +178,13 @@ struct SettingsView: View {
                 .fixedSize()
                 .accessibilityLabel(localized("Language"))
             }
+            toggleRow(
+                localized("Show menu bar icon"),
+                isOn: menuBarIcon,
+                help: localized("Open Mac Duo again from Finder or Spotlight to bring it back.")
+            )
             toggleRow(localized("Show angle in menu bar"), isOn: $preferences.showsAngleInMenuBar, help: nil)
+                .disabled(!preferences.showsMenuBarIcon)
             toggleRow(localized("Launch at login"), isOn: $launchesAtLogin, help: nil)
                 .onChange(of: launchesAtLogin) { _, newValue in
                     setLaunchAtLogin(newValue)
@@ -195,6 +206,36 @@ struct SettingsView: View {
             .font(.caption2)
             .padding(.top, 2)
         }
+    }
+
+    /// Hiding the icon takes away the only way into the panel, so it asks
+    /// first. The alert runs after the toggle, which closes the popover.
+    private var menuBarIcon: Binding<Bool> {
+        Binding(
+            get: { preferences.showsMenuBarIcon },
+            set: { shows in
+                guard !shows else {
+                    preferences.showsMenuBarIcon = true
+                    return
+                }
+                Task { @MainActor in
+                    guard confirmHidingIcon() else { return }
+                    preferences.showsMenuBarIcon = false
+                }
+            }
+        )
+    }
+
+    private func confirmHidingIcon() -> Bool {
+        let alert = NSAlert()
+        alert.messageText = localized("Hide the menu bar icon?")
+        alert.informativeText = localized(
+            "Mac Duo keeps running without it. Open the app again from Finder or Spotlight to bring the icon back."
+        )
+        alert.addButton(withTitle: localized("Hide"))
+        alert.addButton(withTitle: localized("Cancel"))
+        NSApp.activate()
+        return alert.runModal() == .alertFirstButtonReturn
     }
 
     private func toggleRow(_ title: String, isOn: Binding<Bool>, help: String?) -> some View {

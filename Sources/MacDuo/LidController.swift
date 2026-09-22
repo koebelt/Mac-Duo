@@ -43,6 +43,9 @@ final class LidController: ObservableObject {
     private var lastChangedAngle: Double?
     private var lastChangeTime: CFTimeInterval = 0
     private var lastClosingTime: CFTimeInterval = -.greatestFiniteMagnitude
+    /// When the lid was last seen moving up. The pre-warm uses it to have a
+    /// picture in hand before an opening run starts.
+    private var lastOpeningTime: CFTimeInterval = -.greatestFiniteMagnitude
     private var visualAngle = CriticallyDampedSpring()
     private var consecutiveFailedReads = 0
     private var startedAt: CFTimeInterval = 0
@@ -61,6 +64,10 @@ final class LidController: ObservableObject {
     private var timeoutAwaitingRelease = false
     /// The setting as last seen, so flipping it drops stale tracking.
     private var wasTimeoutEnabled = false
+    /// True while the run showing was started by the lid coming back up.
+    /// Such a run ends when the lid stops rising, so a lid opened halfway and
+    /// left there is not held under a frozen picture.
+    private var isOpeningRun = false
     /// True while `beginClosingOut()` is easing the picture back to flat.
     private var isClosingOut = false
     private var closingOutStartedAt: CFTimeInterval = 0
@@ -69,6 +76,9 @@ final class LidController: ObservableObject {
     /// The lowest reading since the effect started. Opening releases only
     /// once the lid has risen `LidEffectPolicy.minimumReleaseRise` above it.
     private var lowestRunAngle: Double = 0
+    /// The lowest reading while nothing is showing, since the lid was last
+    /// above the start angle. An opening run measures its rise from here.
+    private var idleLowAngle: Double = .greatestFiniteMagnitude
 
     private static let idlePollInterval: TimeInterval = 1.0 / 8
     private static let activePollInterval: TimeInterval = 1.0 / 30
@@ -99,6 +109,11 @@ final class LidController: ObservableObject {
     /// How long a lid held above the start angle waits before it counts as
     /// opened again, for openings slower than `triggerOpeningSpeed`.
     private static let openDwellDuration: TimeInterval = 1
+
+    /// How long an opening run carries on after the lid stops rising. The
+    /// picture eases back to flat from there, rather than holding the angle
+    /// the lid stopped at.
+    private static let openingStallDuration: TimeInterval = 1
 
     /// Movement within this many degrees counts as holding still.
     private static let timeoutMovementThreshold: Double = 2
@@ -157,6 +172,7 @@ final class LidController: ObservableObject {
             rawAngle = angle
             currentAngle = angle
             visualAngle.reset(to: angle)
+            idleLowAngle = angle
         }
         // Before the first poll, which reads it.
         builtInLayout = Layout(displayID: NSScreen.builtIn?.displayID, frame: NSScreen.builtIn?.frame)
@@ -191,6 +207,7 @@ final class LidController: ObservableObject {
         pictureTask = nil
         isCapturePending = false
         isClosingOut = false
+        isOpeningRun = false
         stopDisplayLink()
         overlay.dismiss(animated: false)
         snapshotter.stop()
@@ -205,6 +222,8 @@ final class LidController: ObservableObject {
         lastChangedAngle = nil
         angularVelocity = 0
         lastClosingTime = -.greatestFiniteMagnitude
+        lastOpeningTime = -.greatestFiniteMagnitude
+        idleLowAngle = rawAngle
         motionIntent.reset()
         openDwell.reset()
         peakAngle = 0
@@ -277,7 +296,11 @@ final class LidController: ObservableObject {
 
         rawAngle = angle
         peakAngle = max(peakAngle, angle)
-        if isActive { lowestRunAngle = min(lowestRunAngle, angle) }
+        if isActive {
+            lowestRunAngle = min(lowestRunAngle, angle)
+        } else {
+            updateIdleLow(angle: angle)
+        }
         publish(angle: angle)
 
         if preferences.isEnabled {
@@ -293,7 +316,21 @@ final class LidController: ObservableObject {
     }
 
     private var effectPolicy: LidEffectPolicy {
-        LidEffectPolicy(threshold: preferences.thresholdAngle, hysteresis: preferences.hysteresis)
+        LidEffectPolicy(
+            threshold: preferences.thresholdAngle,
+            hysteresis: preferences.hysteresis,
+            playsOnOpen: preferences.playsOnOpen
+        )
+    }
+
+    /// The lowest the lid has rested at while nothing is showing. Above the
+    /// start angle there is no run left to play in reverse, so it starts over.
+    private func updateIdleLow(angle: Double) {
+        if angle >= preferences.thresholdAngle {
+            idleLowAngle = angle
+        } else {
+            idleLowAngle = min(idleLowAngle, angle)
+        }
     }
 
     /// Whether the picture belongs on screen for this angle. It widens the
@@ -324,6 +361,7 @@ final class LidController: ObservableObject {
             angle: angle,
             predictedAngle: predictedAngle(),
             riseSinceLowest: angle - lowestRunAngle,
+            riseSinceIdleLow: angle - idleLowAngle,
             hasBeenAboveThreshold: peakAngle >= threshold,
             wasClosingRecently: motionIntent.wasClosingRecently(
                 at: now,
@@ -333,6 +371,13 @@ final class LidController: ObservableObject {
             hasDwelledOpen: openDwell.hasDwelled(at: now, duration: Self.openDwellDuration),
             minimumDurationElapsed: minimumDurationElapsed
         )
+
+        // A run the lid started on its way up only lasts while it keeps
+        // rising. Stopping halfway eases the picture back to flat instead of
+        // holding it, whatever the timeout setting says.
+        if isActive, wanted, isOpeningRun, now - lastOpeningTime > Self.openingStallDuration {
+            return false
+        }
 
         // The timeout only cuts short a run the policy would keep showing.
         if isActive, wanted, minimumDurationElapsed,
@@ -411,16 +456,28 @@ final class LidController: ObservableObject {
         )
         if angularVelocity >= Self.triggerOpeningSpeed {
             lastClosingTime = -.greatestFiniteMagnitude
+            lastOpeningTime = now
         } else if angularVelocity <= -preferences.closingSpeed {
             lastClosingTime = now
+        }
+        // The lid turned back down, so this is an ordinary closing run and
+        // the stall release no longer applies.
+        if isOpeningRun, angularVelocity <= -Self.triggerClosingSpeed {
+            isOpeningRun = false
         }
     }
 
     /// Runs only while the lid is closing, so holding it still does not leave
     /// a capture loop running.
     private func updatePrewarm(angle: Double, ceiling: Double) {
-        let closingRecently = CACurrentMediaTime() - lastClosingTime < preferences.prewarmLinger
-        guard angle <= ceiling, closingRecently else {
+        let now = CACurrentMediaTime()
+        let closingRecently = now - lastClosingTime < preferences.prewarmLinger
+        // An opening run starts a few degrees into the rise, so the capture
+        // has to be under way from the first sample that moves up.
+        let openingRecently = preferences.playsOnOpen
+            && angle < preferences.thresholdAngle
+            && now - lastOpeningTime < preferences.prewarmLinger
+        guard angle <= ceiling, closingRecently || openingRecently else {
             snapshotter.endPrewarm()
             streamer.stop()
             overlay.discardLive()
@@ -458,6 +515,10 @@ final class LidController: ObservableObject {
     private func setActive(_ active: Bool) {
         isActive = active
         if active {
+            // The policy starts a run on a rising lid only while it is below
+            // the start angle, which is what this reads back.
+            isOpeningRun = angularVelocity >= Self.triggerOpeningSpeed
+                && rawAngle < preferences.thresholdAngle
             peakAngle = rawAngle
             lowestRunAngle = rawAngle
             openDwell.reset()
@@ -472,8 +533,10 @@ final class LidController: ObservableObject {
             setPollInterval(Self.activePollInterval)
             presentPicture()
         } else {
+            isOpeningRun = false
             snapshotter.discard()
             timeoutReferenceAngle = nil
+            updateIdleLow(angle: rawAngle)
             beginClosingOut()
         }
     }
@@ -725,10 +788,21 @@ final class LidController: ObservableObject {
         timeoutAwaitingRelease = false
         wasTimeoutEnabled = false
         isClosingOut = false
+        isOpeningRun = false
+        lastOpeningTime = -.greatestFiniteMagnitude
         if let angle = sensor.angle() {
             rawAngle = angle
             visualAngle.reset(to: angle)
+            idleLowAngle = angle
+            // Waking is nearly always the lid coming up, and the picture has
+            // to be in hand before the opening run starts. The pre-warm stops
+            // itself if the lid turns out to be resting.
+            if preferences.playsOnOpen, angle < preferences.thresholdAngle {
+                lastOpeningTime = CACurrentMediaTime()
+            }
         }
-        setPollInterval(Self.idlePollInterval)
+        // A rise of a few degrees starts the opening run, so the first samples
+        // after waking cannot wait for the idle interval.
+        setPollInterval(Self.activePollInterval)
     }
 }

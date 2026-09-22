@@ -36,3 +36,11 @@
 "Language" = "Language";
 "System" = "System";
 "Chinese (Simplified)" = "Chinese (Simplified)";
+"Play on opening" = "Play on opening";
+"Plays the effect in reverse as the lid opens back up, including after the Mac has slept." = "Plays the effect in reverse as the lid opens back up, including after the Mac has slept.";
+"Show menu bar icon" = "Show menu bar icon";
+"Open Mac Duo again from Finder or Spotlight to bring it back." = "Open Mac Duo again from Finder or Spotlight to bring it back.";
+"Hide the menu bar icon?" = "Hide the menu bar icon?";
+"Mac Duo keeps running without it. Open the app again from Finder or Spotlight to bring the icon back." = "Mac Duo keeps running without it. Open the app again from Finder or Spotlight to bring the icon back.";
+"Hide" = "Hide";
+"Cancel" = "Cancel";

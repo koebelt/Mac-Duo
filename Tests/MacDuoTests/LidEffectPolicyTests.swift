@@ -51,6 +51,7 @@ struct LidEffectPolicyTests {
                 angle: 129.9,
                 predictedAngle: 129.9,
                 riseSinceLowest: 0,
+                riseSinceIdleLow: 0,
                 hasBeenAboveThreshold: true,
                 wasClosingRecently: intent.wasClosingRecently(at: 10.3, memoryDuration: 1.5),
                 isClearlyOpening: false,
@@ -69,6 +70,7 @@ struct LidEffectPolicyTests {
                 angle: 129,
                 predictedAngle: 129,
                 riseSinceLowest: 0,
+                riseSinceIdleLow: 0,
                 hasBeenAboveThreshold: true,
                 wasClosingRecently: false,
                 isClearlyOpening: false,
@@ -124,6 +126,66 @@ struct LidEffectPolicyTests {
         #expect(!activeEffect(angle: 130, opening: false, dwelled: true, rise: 1))
     }
 
+    // MARK: - Playing the effect in reverse as the lid opens
+
+    @Test
+    func testRisingLidStartsAnOpeningRun() {
+        // The run macOS slept through: the lid comes back up from nearly shut
+        // with nothing on screen.
+        #expect(openingRun(angle: 30, rise: 12))
+    }
+
+    @Test
+    func testOpeningRunNeedsAnOpeningLid() {
+        #expect(!openingRun(angle: 30, rise: 12, opening: false))
+    }
+
+    @Test
+    func testTiltingTheScreenUpDoesNotStartAnOpeningRun() {
+        // A few degrees of adjustment while working must be ignored.
+        #expect(!openingRun(angle: 60, rise: 4))
+    }
+
+    @Test
+    func testOpeningRunNeedsRoomLeftBelowTheStartAngle() {
+        #expect(openingRun(angle: 80, rise: 12))
+        #expect(!openingRun(angle: 81, rise: 12))
+    }
+
+    @Test
+    func testOpeningRunOnlyStartsWhenTheSettingIsOn() {
+        #expect(!openingRun(angle: 30, rise: 12, playsOnOpen: false))
+    }
+
+    @Test
+    func testOpeningRunReleasesBackAtTheStartAngle() {
+        let policy = LidEffectPolicy(threshold: 90, hysteresis: 4, playsOnOpen: true)
+        #expect(wantsActiveEffect(policy: policy, angle: 89, opening: true))
+        #expect(!wantsActiveEffect(policy: policy, angle: 90, opening: true))
+    }
+
+    /// The lid rising with nothing on screen, at the default start angle.
+    private func openingRun(
+        angle: Double,
+        rise: Double,
+        opening: Bool = true,
+        playsOnOpen: Bool = true
+    ) -> Bool {
+        LidEffectPolicy(threshold: 90, hysteresis: 4, playsOnOpen: playsOnOpen).wantsEffect(
+            isEnabled: true,
+            isActive: false,
+            angle: angle,
+            predictedAngle: angle,
+            riseSinceLowest: 0,
+            riseSinceIdleLow: rise,
+            hasBeenAboveThreshold: false,
+            wasClosingRecently: false,
+            isClearlyOpening: opening,
+            hasDwelledOpen: false,
+            minimumDurationElapsed: true
+        )
+    }
+
     private func activeEffect(
         angle: Double,
         opening: Bool,
@@ -155,6 +217,7 @@ struct LidEffectPolicyTests {
             angle: angle,
             predictedAngle: angle,
             riseSinceLowest: rise,
+            riseSinceIdleLow: rise,
             hasBeenAboveThreshold: true,
             wasClosingRecently: false,
             isClearlyOpening: opening,

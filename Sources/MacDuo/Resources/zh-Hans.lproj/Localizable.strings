@@ -36,3 +36,11 @@
 "Language" = "语言";
 "System" = "跟随系统";
 "Chinese (Simplified)" = "简体中文";
+"Play on opening" = "掀开时播放";
+"Plays the effect in reverse as the lid opens back up, including after the Mac has slept." = "掀开屏幕时反向播放该效果，Mac 睡眠后唤醒时同样适用。";
+"Show menu bar icon" = "显示菜单栏图标";
+"Open Mac Duo again from Finder or Spotlight to bring it back." = "再次从访达或聚焦打开 Mac Duo 即可让图标重新出现。";
+"Hide the menu bar icon?" = "要隐藏菜单栏图标吗？";
+"Mac Duo keeps running without it. Open the app again from Finder or Spotlight to bring the icon back." = "隐藏后 Mac Duo 仍会继续运行。再次从访达或聚焦打开本应用即可让图标重新出现。";
+"Hide" = "隐藏";
+"Cancel" = "取消";
